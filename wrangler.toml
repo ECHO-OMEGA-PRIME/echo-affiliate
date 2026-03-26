@@ -1,0 +1,30 @@
+name = "echo-affiliate"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "echo-affiliate"
+database_id = "63f8eddd-ae51-4c5d-bf64-2ebc8b11a087"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "db2d1bd12d194173b0ac462423eafa15"
+
+[triggers]
+crons = ["0 4 * * *"]
+
+[[services]]
+binding = "ENGINE_RUNTIME"
+service = "echo-engine-runtime"
+
+[[services]]
+binding = "SHARED_BRAIN"
+service = "echo-shared-brain"
+
+[[services]]
+binding = "EMAIL_SENDER"
+service = "echo-email-sender"

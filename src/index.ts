@@ -94,7 +94,7 @@ function ipHash(ip: string): string {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (req.method === 'OPTIONS') return cors();
 
     const url = new URL(req.url);
@@ -136,8 +136,8 @@ export default {
       ).bind(link.id, iph).first();
       const isUnique = existing ? 0 : 1;
 
-      // Fire and forget: record click + update counters
-      (async () => {
+      // Record click + update counters (ctx.waitUntil to prevent data loss)
+      ctx.waitUntil((async () => {
         try {
           await env.DB.batch([
             env.DB.prepare('INSERT INTO clicks (link_id, affiliate_id, program_id, visitor_ip_hash, visitor_ua, referrer, country, device, is_unique) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -148,7 +148,7 @@ export default {
               .bind(link.affiliate_id),
           ]);
         } catch (_) { /* non-blocking */ }
-      })();
+      })());
 
       // Set affiliate cookie and redirect
       const dest = new URL(link.destination_url as string);
@@ -260,8 +260,8 @@ else{m.className='msg err';m.textContent=j.error||'Failed';}}catch(err){const m=
 
       await env.DB.prepare('UPDATE programs SET total_affiliates = total_affiliates + 1 WHERE id = ?').bind(body.program_id).run();
 
-      // Fire and forget: send welcome email
-      (async () => {
+      // Send welcome email (ctx.waitUntil to ensure delivery)
+      ctx.waitUntil((async () => {
         try {
           await env.EMAIL_SENDER.fetch('https://email/send', {
             method: 'POST',
@@ -276,7 +276,7 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
             }),
           });
         } catch (_) { /* non-blocking */ }
-      })();
+      })());
 
       return json({ id, ref_code: refCode, status, message: status === 'approved' ? 'Approved! Check your email for your referral code.' : 'Application submitted. We will review it shortly.' }, 201);
     }
@@ -348,9 +348,9 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
           .bind(revenue, commission, program.id),
       ]);
 
-      // Multi-tier: credit parent affiliate
+      // Multi-tier: credit parent affiliate (ctx.waitUntil to prevent commission loss)
       if (affiliate.parent_id) {
-        (async () => {
+        ctx.waitUntil((async () => {
           try {
             const parent = await env.DB.prepare('SELECT * FROM affiliates WHERE id = ?').bind(affiliate.parent_id).first();
             if (parent) {
@@ -366,7 +366,7 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
               }
             }
           } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-affiliate', msg: 'Parent commission credit failed', error: String(e) })); }
-        })();
+        })());
       }
 
       return json({ conversion_id: convId, commission, fraud_score: fraudScore, status: fraudScore > 50 ? 'pending_review' : 'recorded' }, 201);

@@ -102,7 +102,8 @@ export default {
     const m = req.method;
     const ip = req.headers.get('CF-Connecting-IP') || '0.0.0.0';
 
-    // ── Public: Health ──
+    // ── Public: Root + Health ──
+    if (p === '/') return json({ service: 'echo-affiliate', version: '1.0.0', status: 'operational' });
     if (p === '/health') {
       const r = await env.DB.prepare('SELECT COUNT(*) as c FROM programs').first<{ c: number }>();
       return json({ status: 'healthy', service: 'echo-affiliate', version: '1.0.0', programs: r?.c || 0 });

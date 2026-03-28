@@ -282,10 +282,10 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
 
     // ── Public: Record Conversion (POST /convert) ──
     if (m === 'POST' && p === '/convert') {
-      if (!(await rateLimit(env, `conv:${ip}`, 30, 60))) return json({ error: 'Rate limited' }, 429);
+      if (!(await rateLimit(env, `conv:${ip}`, 5, 60))) return json({ error: 'Rate limited' }, 429);
 
       const body = await req.json<Record<string, unknown>>().catch(() => null);
-      if (!body?.affiliate_ref || !body?.program_id) return json({ error: 'affiliate_ref, program_id required' }, 400);
+      if (!body?.affiliate_ref || !body?.program_id || !body?.order_id) return json({ error: 'affiliate_ref, program_id, order_id required' }, 400);
 
       const affiliate = await env.DB.prepare('SELECT * FROM affiliates WHERE ref_code = ? AND status IN ("approved","active")')
         .bind(body.affiliate_ref).first();
@@ -314,26 +314,32 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
 
       commission = Math.round(commission * 100) / 100;
 
-      // Fraud check: same order_id
-      if (body.order_id) {
-        const dupConv = await env.DB.prepare('SELECT id FROM conversions WHERE order_id = ? AND program_id = ?')
-          .bind(body.order_id, body.program_id).first();
-        if (dupConv) return json({ error: 'Duplicate conversion' }, 409);
-      }
+      // Fraud check: duplicate order_id (now required)
+      const dupConv = await env.DB.prepare('SELECT id FROM conversions WHERE order_id = ? AND program_id = ?')
+        .bind(body.order_id, body.program_id).first();
+      if (dupConv) return json({ error: 'Duplicate conversion' }, 409);
+
+      // Per-affiliate rate limit (prevent single affiliate from flooding)
+      if (!(await rateLimit(env, `conv:aff:${affiliate.id}`, 10, 3600))) return json({ error: 'Too many conversions for this affiliate' }, 429);
 
       const convId = uid();
       const fraudFlags: string[] = [];
       let fraudScore = 0;
       if (revenue > 10000) { fraudFlags.push('high_value'); fraudScore += 30; }
-      if (!body.customer_email) { fraudFlags.push('no_customer_email'); fraudScore += 10; }
+      if (revenue > 5000) { fraudFlags.push('elevated_value'); fraudScore += 15; }
+      if (!body.customer_email) { fraudFlags.push('no_customer_email'); fraudScore += 15; }
+      // Velocity check: same IP recording multiple conversions
+      const recentFromIP = await env.DB.prepare('SELECT COUNT(*) as c FROM conversions WHERE metadata LIKE ? AND created_at > datetime("now", "-1 hour")')
+        .bind(`%"ip":"${ip.replace(/[^0-9.a-fA-F:]/g, '')}"%`).first<{ c: number }>();
+      if (recentFromIP && recentFromIP.c > 3) { fraudFlags.push('ip_velocity'); fraudScore += 25; }
 
       await env.DB.batch([
         env.DB.prepare(
           'INSERT INTO conversions (id, affiliate_id, program_id, tenant_id, link_id, order_id, customer_email, revenue, commission, commission_type, status, fraud_score, fraud_flags, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(convId, affiliate.id, program.id, program.tenant_id, body.link_id || null, body.order_id || null,
           sanitize(body.customer_email as string, 200), revenue, commission, commType,
-          fraudScore > 50 ? 'pending' : (program.auto_approve ? 'approved' : 'pending'),
-          fraudScore, JSON.stringify(fraudFlags), JSON.stringify(body.metadata || {})
+          fraudScore > 30 ? 'pending' : (program.auto_approve ? 'approved' : 'pending'),
+          fraudScore, JSON.stringify(fraudFlags), JSON.stringify({ ...(body.metadata as Record<string, unknown> || {}), ip })
         ),
         env.DB.prepare('UPDATE affiliates SET total_referrals = total_referrals + 1, total_conversions = total_conversions + 1, total_revenue = total_revenue + ?, total_earned = total_earned + ?, balance = balance + ? WHERE id = ?')
           .bind(revenue, commission, commission, affiliate.id),
@@ -352,13 +358,13 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
                 await env.DB.batch([
                   env.DB.prepare(
                     'INSERT INTO conversions (id, affiliate_id, program_id, tenant_id, order_id, revenue, commission, commission_type, status, sub_affiliate_id, parent_conversion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-                  ).bind(uid(), parent.id, program.id, program.tenant_id, body.order_id || null, 0, subComm, 'sub_commission', 'approved', affiliate.id, convId),
+                  ).bind(uid(), parent.id, program.id, program.tenant_id, body.order_id || null, 0, subComm, 'sub_commission', fraudScore > 30 ? 'pending' : 'approved', affiliate.id, convId),
                   env.DB.prepare('UPDATE affiliates SET total_earned = total_earned + ?, balance = balance + ? WHERE id = ?')
                     .bind(subComm, subComm, parent.id),
                 ]);
               }
             }
-          } catch (_) { /* non-blocking */ }
+          } catch (e) { console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-affiliate', msg: 'Parent commission credit failed', error: String(e) })); }
         })();
       }
 

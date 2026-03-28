@@ -110,6 +110,7 @@ export default {
     }
 
     try {
+    try {
     // ── Public: Click Tracking (GET /go/:slug) ──
     if (m === 'GET' && p.startsWith('/go/')) {
       const linkSlug = p.split('/')[2];
@@ -118,7 +119,6 @@ export default {
       const link = await env.DB.prepare('SELECT * FROM links WHERE slug = ? AND is_active = 1').bind(linkSlug).first();
       if (!link) return json({ error: 'Link not found' }, 404);
 
-      try {
     // Rate limit: 60 clicks/min per IP
       if (!(await rateLimit(env, `click:${ip}`, 60, 60))) {
         return Response.redirect(link.destination_url as string, 302);
@@ -378,14 +378,7 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
       if (!refCode) return json({ error: 'Missing ref code' }, 400);
 
       const affiliate = await env.DB.prepare('SELECT * FROM affiliates WHERE ref_code = ?').bind(refCode).first();
-      if (!affiliate) } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      const stack = err instanceof Error ? err.stack : undefined;
-      slog('error', 'Unhandled request error', { method: m, path: p, error: msg, stack });
-      return json({ error: 'Internal server error', message: msg, path: p }, 500);
-    }
-
-    return json({ error: 'Not found' }, 404);
+      if (!affiliate) return json({ error: 'Affiliate not found' }, 404);
 
       const links = await env.DB.prepare('SELECT * FROM links WHERE affiliate_id = ? ORDER BY created_at DESC LIMIT 20').bind(affiliate.id).all();
       const recentConv = await env.DB.prepare('SELECT * FROM conversions WHERE affiliate_id = ? ORDER BY created_at DESC LIMIT 20').bind(affiliate.id).all();
@@ -529,14 +522,7 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
       const body = await req.json<{ status: string }>().catch(() => null);
       if (!body?.status || !['approved','rejected','reversed'].includes(body.status)) return json({ error: 'Invalid status' }, 400);
       const conv = await env.DB.prepare('SELECT * FROM conversions WHERE id = ? AND tenant_id = ?').bind(id, tenantId).first();
-      if (!conv) } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      const stack = err instanceof Error ? err.stack : undefined;
-      slog('error', 'Unhandled request error', { method: m, path: p, error: msg, stack });
-      return json({ error: 'Internal server error', message: msg, path: p }, 500);
-    }
-
-    return json({ error: 'Not found' }, 404);
+      if (!conv) return json({ error: 'Conversion not found' }, 404);
 
       const stmts = [
         env.DB.prepare('UPDATE conversions SET status = ?, approved_at = ? WHERE id = ?')

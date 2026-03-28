@@ -96,6 +96,7 @@ export default {
       return json({ status: 'healthy', service: 'echo-affiliate', version: '1.0.0', programs: r?.c || 0 });
     }
 
+    try {
     // ── Public: Click Tracking (GET /go/:slug) ──
     if (m === 'GET' && p.startsWith('/go/')) {
       const linkSlug = p.split('/')[2];
@@ -694,6 +695,13 @@ ${status === 'approved' ? `<p>Your referral code: <strong>${refCode}</strong></p
     }
 
     return json({ error: 'Not found' }, 404);
+    } catch (e: any) {
+      if (e.message?.includes('JSON')) {
+        return json({ error: 'Invalid JSON body' }, 400);
+      }
+      console.error(`[echo-affiliate] ${e.message}`);
+      return json({ error: 'Internal server error' }, 500);
+    }
   },
 
   async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
